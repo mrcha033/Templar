@@ -1,10 +1,31 @@
+import openai
 import yaml
 from datasets import Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
 
-# yaml 파일을 로드
+# Load your OpenAI API key
+with open('config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+openai.api_key = config['openai_api_key']
+
+# Load YAML file
 with open('tuning.yaml', 'r', encoding='utf-8') as f:
     data = yaml.safe_load(f)
+
+# Function to get response from ChatGPT-4 API
+def get_response(prompt):
+    response = openai.Completion.create(
+        engine="gpt-4",  # Specify the engine
+        prompt=prompt,
+        max_tokens=150  # Adjust as needed
+    )
+    return response.choices[0].text.strip()
+
+# Iterate over your data and get responses
+for item in data:
+    input_text = item["input"]
+    output_text = get_response(input_text)
+    print(f"Input: {input_text}\nOutput: {output_text}\n")
 
 # 예시 데이터 변환
 train_data = [{"input": item["input"], "output": item["output"]} for item in data]
@@ -16,7 +37,7 @@ dataset = Dataset.from_dict({
 })
 
 # 모델과 토크나이저 로드
-model_name = "gpt2"  # 예시: GPT-2 모델
+model_name = "gpt-4"  # 예시: GPT-2 모델
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name)
 
