@@ -1,12 +1,12 @@
 from flask import Flask, request, jsonify
-
+import os
 app = Flask(__name__)
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
     if request.method == 'GET':
         # Verification challenge
-        verify_token = 'templar_webhook_verify_token_2024'
+        verify_token = os.getenv('VERIFY_TOKEN')
         if request.args.get('hub.verify_token') == verify_token:
             return request.args.get('hub.challenge')
         return 'Verification token mismatch', 403
