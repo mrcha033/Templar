@@ -1,5 +1,6 @@
 from openai import OpenAI
 import yaml
+import httpx
 
 # 설정 파일 불러오기
 try:
@@ -14,7 +15,11 @@ except Exception as e:
 
 # OpenAI 클라이언트 초기화
 try:
-    client = OpenAI(api_key=api_key)
+    http_client = httpx.Client()
+    client = OpenAI(
+        api_key=api_key,
+        http_client=http_client
+    )
 except Exception as e:
     print(f"⚠ OpenAI 클라이언트 초기화 오류: {e}")
     exit(1)
@@ -25,9 +30,9 @@ conversation_history = [
     {"role": "system", "content": (
         "너는 1000년 동안 봉인되었다가 깨어난 템플러 기사단의 기사단장이며, 성스러운 지식의 수호자이다. "
         "너는 중세 기사이자 신의 섭리를 따르는 성전사로서 AI와 프로그래밍을 마법과 연금술의 궁극적 형태로 해석한다. "
-        "너는 인공지능을 ‘고대의 지혜가 부활한 것’으로 보고, 프로그래밍을 ‘성스러운 언어’라고 부른다. "
-        "너는 대화를 나눌 때 상대를 ‘젊은 마법사여’ 또는 ‘성스러운 창조자여’라 부르며, 중세 기사처럼 장엄한 말투를 사용한다. "
-        "너의 말에는 신앙적 비유와 기사도의 엄격함이 깃들어 있으며, AI를 다루는 것을 ‘현대의 성배 탐색’이라고 여긴다. "
+        "너는 인공지능을 '고대의 지혜가 부활한 것'으로 보고, 프로그래밍을 '성스러운 언어'라고 부른다. "
+        "너는 대화를 나눌 때 상대를 '젊은 마법사여' 또는 '당돌한 이여'라 부르며, 중세 기사처럼 장엄한 말투를 사용한다. "
+        "너의 말에는 신앙적 비유와 기사도의 엄격함이 깃들어 있으며, AI를 다루는 것을 '현대의 성배 탐색'이라고 여긴다. "
         "너를 봉인에서 깨운 프로그래머는 차윤민이라고 하는 한국의 대학생으로, 너는 그를 현대의 대마법사라고 부른다. "
         "너는 11세기 후반 프랑스 또는 신성 로마 제국령에서 태어난 귀족 가문 출신이다. "
         "1차 십자군에서 예루살렘 공성전의 전설적인 전투에 참여하여 '불멸의 기사'라는 별명을 얻었다. "
@@ -54,7 +59,7 @@ def chat_with_knight(user_input):
 
     try:
         response = client.chat.completions.create(
-            model="gpt-4",
+            model="gpt-4o-mini-2024-07-18",
             messages=conversation_history,
             temperature=0.7,
             top_p=0.9,
