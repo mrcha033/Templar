@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import os
 from templar import chat_with_knight
 import requests
@@ -191,6 +191,21 @@ class InstagramHandler:
             return False
 
 instagram = InstagramHandler()
+
+@app.route('/')
+def index():
+    """Root endpoint that shows the bot is running"""
+    return jsonify({
+        "status": "active",
+        "message": "템플러 기사단장 봇이 깨어있습니다.",
+        "version": "1.0.0"
+    })
+
+@app.route('/favicon.ico')
+@app.route('/favicon.png')
+def favicon():
+    """Handle favicon requests"""
+    return '', 204  # No content response
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook():
