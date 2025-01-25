@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory
 import os
 from templar import chat_with_knight
 import requests
@@ -194,12 +194,8 @@ instagram = InstagramHandler()
 
 @app.route('/')
 def index():
-    """Root endpoint that shows the bot is running"""
-    return jsonify({
-        "status": "active",
-        "message": "템플러 기사단장 봇이 깨어있습니다.",
-        "version": "1.0.0"
-    })
+    """Render the main page."""
+    return render_template('index.html')
 
 @app.route('/favicon.ico')
 @app.route('/favicon.png')
