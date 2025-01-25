@@ -275,4 +275,4 @@ def health_check():
 
 if __name__ == '__main__':
     logger.info("Starting Instagram Templar Bot")
-    app.run(port=3000)
+    app.run(port=3000, debug=True)
