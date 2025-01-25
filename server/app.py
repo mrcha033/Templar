@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 import os
 import yaml
-from templar import chat_with_knight
+from server.templar import chat_with_knight
 import requests
 
 app = Flask(__name__)

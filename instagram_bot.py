@@ -1,6 +1,6 @@
 import requests
 import yaml
-from templar import chat_with_knight
+from server.templar import chat_with_knight
 
 # Load configuration
 with open("config.yaml", "r") as file:
