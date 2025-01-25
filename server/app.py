@@ -4,17 +4,17 @@ from templar import chat_with_knight
 import requests
 import logging
 import traceback
+import sys
 from datetime import datetime
 
 app = Flask(__name__)
 
-# Configure logging
+# Configure logging for Vercel environment
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
-        logging.FileHandler('instagram_bot.log'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID")
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+
+# Verify environment variables
+if not all([ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, VERIFY_TOKEN]):
+    logger.error("Missing required environment variables")
+    required_vars = {
+        "ACCESS_TOKEN": bool(ACCESS_TOKEN),
+        "INSTAGRAM_ACCOUNT_ID": bool(INSTAGRAM_ACCOUNT_ID),
+        "VERIFY_TOKEN": bool(VERIFY_TOKEN)
+    }
+    logger.error(f"Environment variables status: {required_vars}")
 
 class InstagramError(Exception):
     """Custom exception for Instagram API errors"""
