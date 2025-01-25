@@ -1,12 +1,10 @@
 import requests
-import yaml
+import os
 from server.templar import chat_with_knight
 
-# Load configuration
-with open("config.yaml", "r") as file:
-    config = yaml.safe_load(file)
-    ACCESS_TOKEN = config.get("instagram_access_token")  # Note: There's a typo in your config key
-    INSTAGRAM_ACCOUNT_ID = config.get("instagram_account_id")
+# Load environment variables
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID")
 
 class InstagramBot:
     def __init__(self):
