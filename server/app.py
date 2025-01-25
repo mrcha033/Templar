@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 import os
-from templar import chat_with_knight
+from templar_tool import chat_with_knight
 import requests
 import logging
 import traceback

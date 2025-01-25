@@ -1,21 +1,20 @@
 from openai import OpenAI
-import os
+import yaml
 import httpx
 
-# 환경변수 불러오기
+# 설정 파일 불러오기
 try:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("환경변수에 OPENAI_API_KEY가 없습니다.")
+    with open('config.yaml', 'r', encoding='utf-8') as file:
+        config = yaml.safe_load(file)
 except Exception as e:
-    print(f"⚠ 환경변수 로드 오류: {e}")
+    print(f"⚠ 설정 파일 로드 오류: {e}")
     exit(1)
 
 # OpenAI 클라이언트 초기화
 try:
     http_client = httpx.Client()
     client = OpenAI(
-        api_key=api_key,
+        api_key=config['openai_api_key'],
         http_client=http_client
     )
 except Exception as e:
