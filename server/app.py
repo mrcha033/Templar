@@ -5,47 +5,70 @@ import requests
 import logging
 import traceback
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
+import asyncio
+import time
+from requests_oauthlib import OAuth1Session
 
 app = Flask(__name__)
 
 # Configure logging for Vercel environment
 logging.basicConfig(
+    stream=sys.stdout,
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
-INSTAGRAM_ACCOUNT_ID = os.getenv("INSTAGRAM_ACCOUNT_ID")
-VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
+# Check required environment variables
+required_vars = {
+    "IG_ACCESS_TOKEN": os.getenv("IG_ACCESS_TOKEN"),
+    "INSTAGRAM_ACCOUNT_ID": os.getenv("INSTAGRAM_ACCOUNT_ID"),
+    "IG_VERIFY_TOKEN": os.getenv("IG_VERIFY_TOKEN"),
+    "X_API_KEY": os.getenv("X_API_KEY"),
+    "X_API_KEY_SECRET": os.getenv("X_API_KEY_SECRET"),
+    "X_ACCESS_TOKEN": os.getenv("X_ACCESS_TOKEN"),
+    "X_ACCESS_TOKEN_SECRET": os.getenv("X_ACCESS_TOKEN_SECRET"),
+    "VERIFY_TOKEN": os.getenv("VERIFY_TOKEN")
+}
 
-# Verify environment variables
-if not all([ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID, VERIFY_TOKEN]):
-    logger.error("Missing required environment variables")
-    required_vars = {
-        "ACCESS_TOKEN": bool(ACCESS_TOKEN),
-        "INSTAGRAM_ACCOUNT_ID": bool(INSTAGRAM_ACCOUNT_ID),
-        "VERIFY_TOKEN": bool(VERIFY_TOKEN)
-    }
-    logger.error(f"Environment variables status: {required_vars}")
+missing_vars = [key for key, value in required_vars.items() if not value]
 
-class InstagramError(Exception):
-    """Custom exception for Instagram API errors"""
-    pass
+if missing_vars:
+    logger.error(f"Missing required environment variables: {missing_vars}")
+    raise EnvironmentError(f"Missing required environment variables: {missing_vars}")
 
-class InstagramHandler:
-    def __init__(self):
-        self.base_url = f"https://graph.facebook.com/v19.0/{INSTAGRAM_ACCOUNT_ID}"
-        self.headers = {
-            "Authorization": f"Bearer {ACCESS_TOKEN}"
-        }
-        self.logger = logging.getLogger(__name__)
-    
+class RateLimiter:
+    def __init__(self, max_requests, time_window):
+        self.max_requests = max_requests
+        self.time_window = time_window  # in seconds
+        self.requests = []
+        self.lock = asyncio.Lock()
+
+    async def acquire(self):
+        """Check if request can be made within rate limits"""
+        async with self.lock:
+            now = datetime.now()
+            # Remove old requests
+            self.requests = [req_time for req_time in self.requests 
+                           if now - req_time < timedelta(seconds=self.time_window)]
+            
+            if len(self.requests) < self.max_requests:
+                self.requests.append(now)
+                return True
+            
+            # Calculate wait time if rate limit exceeded
+            oldest_request = self.requests[0]
+            wait_time = (oldest_request + timedelta(seconds=self.time_window) - now).total_seconds()
+            if wait_time > 0:
+                logger.warning(f"Rate limit reached. Waiting {wait_time:.2f} seconds")
+                await asyncio.sleep(wait_time)
+                self.requests = self.requests[1:] + [now]
+                return True
+            
+            return False
+
+class APIHandler:
     def log_api_error(self, error, endpoint, method="GET", data=None):
         """Log API errors with detailed information"""
         error_info = {
@@ -54,28 +77,39 @@ class InstagramHandler:
             "error_message": str(error),
             "endpoint": endpoint,
             "method": method,
-            "data": data,
-            "traceback": traceback.format_exc()
+            "data": data
         }
-        self.logger.error(f"API Error: {error_info}")
+        logger.error(f"API Error: {error_info}")
         return error_info
+
+class InstagramHandler(APIHandler):
+    def __init__(self):
+        self.base_url = f"https://graph.facebook.com/v19.0/{required_vars['INSTAGRAM_ACCOUNT_ID']}"
+        self.headers = {
+            "Authorization": f"Bearer {required_vars['IG_ACCESS_TOKEN']}",
+            "Content-Type": "application/json"
+        }
 
     def get_messages(self):
         """Fetch recent messages from Instagram"""
         endpoint = f"{self.base_url}/messages"
-        params = {
-            "fields": "message,from"
-        }
+        params = {"fields": "message,from"}
 
         try:
-            self.logger.info(f"Fetching messages from endpoint: {endpoint}")
+            logger.info(f"Fetching messages from {endpoint}")
             response = requests.get(endpoint, headers=self.headers, params=params)
             response.raise_for_status()
-            messages = response.json().get("data", [])
-            self.logger.info(f"Successfully fetched {len(messages)} messages")
-            return messages
+            
+            try:
+                messages = response.json().get("data", [])
+                logger.info(f"Fetched {len(messages)} messages")
+                return messages
+            except ValueError:
+                logger.error("Failed to decode JSON response")
+                return []
+            
         except requests.exceptions.RequestException as e:
-            error_info = self.log_api_error(e, endpoint)
+            self.log_api_error(e, endpoint)
             return []
 
     def send_message(self, user_id, message):
@@ -87,91 +121,42 @@ class InstagramHandler:
         }
         
         try:
-            self.logger.info(f"Sending message to user {user_id}")
+            logger.info(f"Sending message to user {user_id}")
             response = requests.post(endpoint, headers=self.headers, json=data)
             response.raise_for_status()
-            self.logger.info(f"Successfully sent message to user {user_id}")
+            logger.info(f"Message sent successfully to user {user_id}")
             return True
         except requests.exceptions.RequestException as e:
-            error_info = self.log_api_error(e, endpoint, "POST", data)
+            self.log_api_error(e, endpoint, "POST", data)
             return False
-
-    def reply_to_comment(self, comment_id, message):
-        """Reply to a comment on Instagram"""
-        endpoint = f"https://graph.facebook.com/v19.0/{comment_id}/replies"
-        data = {
-            "message": message,
-            "access_token": ACCESS_TOKEN
-        }
-        
-        try:
-            self.logger.info(f"Replying to comment {comment_id}")
-            response = requests.post(endpoint, json=data)
-            response.raise_for_status()
-            self.logger.info(f"Successfully replied to comment {comment_id}")
-            return True
-        except requests.exceptions.RequestException as e:
-            error_info = self.log_api_error(e, endpoint, "POST", data)
-            return False
-
-    def get_media_comments(self, media_id):
-        """Get comments on a specific media"""
-        endpoint = f"https://graph.facebook.com/v19.0/{media_id}/comments"
-        params = {
-            "fields": "id,text,username,timestamp",
-            "access_token": ACCESS_TOKEN
-        }
-        
-        try:
-            self.logger.info(f"Fetching comments for media {media_id}")
-            response = requests.get(endpoint, params=params)
-            response.raise_for_status()
-            comments = response.json().get("data", [])
-            self.logger.info(f"Successfully fetched {len(comments)} comments for media {media_id}")
-            return comments
-        except requests.exceptions.RequestException as e:
-            error_info = self.log_api_error(e, endpoint)
-            return []
 
     def process_messages(self):
         """Process new messages and respond using the Templar chatbot"""
         try:
             messages = self.get_messages()
-            self.logger.info(f"Processing {len(messages)} messages")
+            logger.info(f"Processing {len(messages)} messages")
             
             for message in messages:
                 user_id = message.get("from", {}).get("id")
                 user_message = message.get("message")
-
+                
                 if user_id and user_message:
-                    self.logger.info(f"Processing message from user {user_id}: {user_message[:50]}...")
+                    logger.info(f"Processing message from user {user_id}: {user_message[:50]}...")
+                    
                     # Get response from Templar chatbot
                     response = chat_with_knight(user_message)
                     
+                    if not response:
+                        logger.warning(f"No response generated for user {user_id}")
+                        response = "죄송합니다. 현재 답변을 생성할 수 없습니다."
+                    
                     # Send response back to user
                     self.send_message(user_id, response)
-        except Exception as e:
-            self.logger.error(f"Error processing messages: {str(e)}\n{traceback.format_exc()}")
-
-    def process_comments(self, media_id):
-        """Process comments on a media post"""
-        try:
-            comments = self.get_media_comments(media_id)
-            self.logger.info(f"Processing {len(comments)} comments for media {media_id}")
-            
-            for comment in comments:
-                comment_id = comment.get("id")
-                comment_text = comment.get("text")
-                
-                if comment_id and comment_text:
-                    self.logger.info(f"Processing comment {comment_id}: {comment_text[:50]}...")
-                    # Get response from Templar chatbot
-                    response = chat_with_knight(comment_text)
                     
-                    # Reply to the comment
-                    self.reply_to_comment(comment_id, response)
+            return True
         except Exception as e:
-            self.logger.error(f"Error processing comments: {str(e)}\n{traceback.format_exc()}")
+            logger.error(f"Error processing messages: {str(e)}")
+            return False
 
     def post_instagram_photo(self, image_url, caption):
         """Post a photo to Instagram"""
@@ -179,18 +164,140 @@ class InstagramHandler:
         data = {
             "image_url": image_url,
             "caption": caption,
-            "access_token": ACCESS_TOKEN
+            "access_token": required_vars["IG_ACCESS_TOKEN"]
         }
 
         try:
+            logger.info(f"Posting image to Instagram: {image_url}")
             response = requests.post(endpoint, headers=self.headers, json=data)
             response.raise_for_status()
+            logger.info("Image posted successfully")
             return True
-        except Exception as e:
-            print(f"Error posting photo: {e}")
+        except requests.exceptions.RequestException as e:
+            self.log_api_error(e, endpoint, "POST", data)
             return False
 
-instagram = InstagramHandler()
+class XHandler(APIHandler):
+    def __init__(self):
+        self.api_version = "2"
+        self.base_url = f"https://api.twitter.com/v{self.api_version}"
+        
+        # Initialize OAuth1 session
+        self.oauth = OAuth1Session(
+            required_vars["X_API_KEY"],
+            client_secret=required_vars["X_API_KEY_SECRET"],
+            resource_owner_key=required_vars["X_ACCESS_TOKEN"],
+            resource_owner_secret=required_vars["X_ACCESS_TOKEN_SECRET"]
+        )
+
+    def get_user_id(self):
+        """Get authenticated user ID"""
+        endpoint = f"{self.base_url}/users/me"
+        
+        try:
+            logger.info("Fetching authenticated user ID")
+            response = self.oauth.get(endpoint)
+            response.raise_for_status()
+            user_data = response.json().get("data", {})
+            return user_data.get("id")
+        except requests.exceptions.RequestException as e:
+            self.log_api_error(e, endpoint)
+            return None
+
+    def get_mentions(self, since_id=None):
+        """Fetch recent mentions"""
+        user_id = self.get_user_id()
+        if not user_id:
+            logger.error("Failed to get user ID")
+            return []
+
+        endpoint = f"{self.base_url}/users/{user_id}/mentions"
+        params = {
+            "expansions": "referenced_tweets.id,author_id",
+            "tweet.fields": "conversation_id,created_at,text"
+        }
+        if since_id:
+            params["since_id"] = since_id
+        
+        try:
+            logger.info("Fetching mentions from X")
+            response = self.oauth.get(endpoint, params=params)
+            response.raise_for_status()
+            
+            # Log rate limit info
+            remaining = response.headers.get('x-rate-limit-remaining')
+            reset_time = response.headers.get('x-rate-limit-reset')
+            logger.info(f"Rate limit - Remaining: {remaining}, Reset time: {reset_time}")
+            
+            mentions = response.json().get("data", [])
+            logger.info(f"Fetched {len(mentions)} mentions")
+            return mentions
+        except requests.exceptions.RequestException as e:
+            self.log_api_error(e, endpoint)
+            return []
+
+    def reply_to_tweet(self, tweet_id, message):
+        """Reply to a tweet"""
+        endpoint = f"{self.base_url}/tweets"
+        data = {
+            "reply": {
+                "in_reply_to_tweet_id": tweet_id
+            },
+            "text": message
+        }
+        
+        try:
+            logger.info(f"Replying to tweet {tweet_id}")
+            response = self.oauth.post(endpoint, json=data)
+            response.raise_for_status()
+            
+            # Log rate limit info
+            remaining = response.headers.get('x-rate-limit-remaining')
+            reset_time = response.headers.get('x-rate-limit-reset')
+            logger.info(f"Rate limit - Remaining: {remaining}, Reset time: {reset_time}")
+            
+            logger.info(f"Successfully replied to tweet {tweet_id}")
+            return True
+        except requests.exceptions.RequestException as e:
+            self.log_api_error(e, endpoint, "POST", data)
+            return False
+
+    def process_mentions(self, since_id=None):
+        """Process mentions and respond using the Templar chatbot"""
+        try:
+            mentions = self.get_mentions(since_id)
+            logger.info(f"Processing {len(mentions)} mentions")
+            
+            for mention in mentions:
+                tweet_id = mention.get("id")
+                tweet_text = mention.get("text")
+                
+                if tweet_id and tweet_text:
+                    # Remove the mention handle from the text
+                    clean_text = ' '.join(word for word in tweet_text.split() 
+                                        if not word.startswith('@'))
+                    
+                    logger.info(f"Processing mention {tweet_id}: {clean_text[:50]}...")
+                    
+                    # Get response from Templar chatbot
+                    response = chat_with_knight(clean_text)
+                    
+                    if not response:
+                        logger.warning(f"No response generated for tweet {tweet_id}")
+                        response = "죄송합니다. 현재 답변을 생성할 수 없습니다."
+                    
+                    # Reply to the tweet
+                    self.reply_to_tweet(tweet_id, response)
+                    
+            # Return the ID of the most recent mention for pagination
+            return mentions[0].get("id") if mentions else since_id
+        except Exception as e:
+            logger.error(f"Error processing mentions: {str(e)}")
+            return since_id
+
+# Initialize handlers
+instagram_handler = InstagramHandler()
+x_handler = XHandler()
 
 @app.route('/')
 def index():
@@ -203,69 +310,30 @@ def favicon():
     """Handle favicon requests"""
     return '', 204  # No content response
 
-@app.route('/webhook', methods=['GET', 'POST'])
-def webhook():
-    if request.method == 'GET':
-        # Verification challenge
-        verify_token = request.args.get('hub.verify_token')
-        logger.info(f"Received webhook verification request with token: {verify_token}")
-        
-        if verify_token == VERIFY_TOKEN:
-            challenge = request.args.get('hub.challenge')
-            logger.info("Webhook verification successful")
-            return challenge
-        
-        logger.warning("Webhook verification failed: token mismatch")
-        return 'Verification token mismatch', 403
+@app.route('/webhook', methods=['GET'])
+def verify_webhook():
+    """Verify webhook for Instagram"""
+    mode = request.args.get('hub.mode')
+    token = request.args.get('hub.verify_token')
+    challenge = request.args.get('hub.challenge')
 
-    if request.method == 'POST':
-        try:
-            logger.info("Received webhook event")
-            # Handle incoming Webhook events
-            data = request.json
-            logger.debug(f"Webhook payload: {data}")
-            
-            # Extract messaging events
-            if 'entry' in data:
-                for entry in data['entry']:
-                    # Handle messages
-                    if 'messaging' in entry:
-                        logger.info("Processing messaging events")
-                        for messaging in entry['messaging']:
-                            sender_id = messaging.get('sender', {}).get('id')
-                            message = messaging.get('message', {}).get('text')
-                            
-                            if sender_id and message:
-                                logger.info(f"Processing message from {sender_id}: {message[:50]}...")
-                                # Get response from Templar chatbot
-                                response = chat_with_knight(message)
-                                
-                                # Send response back to user
-                                instagram.send_message(sender_id, response)
-                    
-                    # Handle comments
-                    if 'changes' in entry:
-                        logger.info("Processing comment events")
-                        for change in entry['changes']:
-                            if change.get('field') == 'comments':
-                                comment_data = change.get('value', {})
-                                media_id = comment_data.get('media_id')
-                                comment_id = comment_data.get('id')
-                                comment_text = comment_data.get('text')
-                                
-                                if comment_id and comment_text:
-                                    logger.info(f"Processing comment {comment_id} on media {media_id}: {comment_text[:50]}...")
-                                    # Get response from Templar chatbot
-                                    response = chat_with_knight(comment_text)
-                                    
-                                    # Reply to the comment
-                                    instagram.reply_to_comment(comment_id, response)
-            
-            return jsonify(success=True), 200
-        except Exception as e:
-            error_msg = f"Error processing webhook: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return jsonify(success=False, error=str(e)), 500
+    if mode and token:
+        if mode == 'subscribe' and token == required_vars["VERIFY_TOKEN"]:
+            logger.info("Webhook verified")
+            return challenge, 200
+        else:
+            logger.warning("Webhook verification failed")
+            return 'Forbidden', 403
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Handle webhook events from Instagram"""
+    try:
+        instagram_handler.process_messages()
+        return 'OK', 200
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -273,6 +341,17 @@ def health_check():
     logger.info("Health check requested")
     return jsonify(status="healthy"), 200
 
+@app.route('/process_x_mentions', methods=['POST'])
+def process_x_mentions():
+    """Endpoint to process X mentions"""
+    try:
+        since_id = request.json.get('since_id')
+        new_since_id = x_handler.process_mentions(since_id)
+        return jsonify({"success": True, "since_id": new_since_id}), 200
+    except Exception as e:
+        logger.error(f"Error processing X mentions: {str(e)}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 if __name__ == '__main__':
-    logger.info("Starting Instagram Templar Bot")
-    app.run(port=3000, debug=True)
+    logger.info("Starting Templar Bot Server")
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 8080)))
