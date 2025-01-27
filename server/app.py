@@ -9,6 +9,12 @@ from datetime import datetime, timedelta
 import asyncio
 import time
 from requests_oauthlib import OAuth1Session
+import hmac
+import hashlib
+import base64
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -20,23 +26,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Check required environment variables
-required_vars = {
-    "IG_ACCESS_TOKEN": os.getenv("IG_ACCESS_TOKEN"),
-    "INSTAGRAM_ACCOUNT_ID": os.getenv("INSTAGRAM_ACCOUNT_ID"),
-    "IG_VERIFY_TOKEN": os.getenv("IG_VERIFY_TOKEN"),
-    "X_API_KEY": os.getenv("X_API_KEY"),
-    "X_API_KEY_SECRET": os.getenv("X_API_KEY_SECRET"),
-    "X_ACCESS_TOKEN": os.getenv("X_ACCESS_TOKEN"),
-    "X_ACCESS_TOKEN_SECRET": os.getenv("X_ACCESS_TOKEN_SECRET"),
-    "VERIFY_TOKEN": os.getenv("VERIFY_TOKEN")
+# Required environment variables
+REQUIRED_ENV_VARS = {
+    'X_CLIENT_ID': os.getenv('X_CLIENT_ID'),
+    'X_CLIENT_SECRET': os.getenv('X_CLIENT_SECRET'),
+    'X_ACCESS_TOKEN': os.getenv('X_ACCESS_TOKEN'),
+    'X_ACCESS_TOKEN_SECRET': os.getenv('X_ACCESS_TOKEN_SECRET')
 }
 
-missing_vars = [key for key, value in required_vars.items() if not value]
-
+# Check for missing environment variables
+missing_vars = [var for var, value in REQUIRED_ENV_VARS.items() if not value]
 if missing_vars:
-    logger.error(f"Missing required environment variables: {missing_vars}")
-    raise EnvironmentError(f"Missing required environment variables: {missing_vars}")
+    logging.error(f"Missing required environment variables: {', '.join(missing_vars)}")
+    raise EnvironmentError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
+# Initialize OAuth session
+oauth = OAuth1Session(
+    client_key=REQUIRED_ENV_VARS['X_CLIENT_ID'],
+    client_secret=REQUIRED_ENV_VARS['X_CLIENT_SECRET'],
+    resource_owner_key=REQUIRED_ENV_VARS['X_ACCESS_TOKEN'],
+    resource_owner_secret=REQUIRED_ENV_VARS['X_ACCESS_TOKEN_SECRET']
+)
 
 class RateLimiter:
     def __init__(self, max_requests, time_window):
@@ -351,6 +361,80 @@ def process_x_mentions():
     except Exception as e:
         logger.error(f"Error processing X mentions: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/webhook/x', methods=['POST'])
+def x_webhook():
+    """Handle X webhook events"""
+    try:
+        # Verify the webhook signature
+        signature = request.headers.get('x-twitter-webhooks-signature')
+        if not signature:
+            logger.warning("Missing webhook signature")
+            return jsonify({"error": "Missing signature"}), 400
+
+        # Get the raw request body
+        raw_data = request.get_data(as_text=True)
+        
+        # Log webhook payload for debugging
+        logger.info(f"Received webhook from X: {raw_data[:200]}...")
+
+        # Parse the webhook payload
+        data = request.json
+        
+        # Check if this is a mention event
+        if data.get('tweet_create_events'):
+            for tweet in data['tweet_create_events']:
+                # Check if this tweet mentions us
+                if tweet.get('in_reply_to_user_id') == x_handler.get_user_id():
+                    tweet_id = tweet.get('id')
+                    tweet_text = tweet.get('text')
+                    
+                    if tweet_id and tweet_text:
+                        # Remove the mention handle from the text
+                        clean_text = ' '.join(word for word in tweet_text.split() 
+                                            if not word.startswith('@'))
+                        
+                        logger.info(f"Processing mention from webhook {tweet_id}: {clean_text[:50]}...")
+                        
+                        # Get response from Templar chatbot
+                        response = chat_with_knight(clean_text)
+                        
+                        if not response:
+                            logger.warning(f"No response generated for tweet {tweet_id}")
+                            response = "죄송합니다. 현재 답변을 생성할 수 없습니다."
+                        
+                        # Reply to the tweet
+                        x_handler.reply_to_tweet(tweet_id, response)
+
+        return jsonify({"success": True}), 200
+    except Exception as e:
+        logger.error(f"Error processing X webhook: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/webhook/x', methods=['GET'])
+def verify_x_webhook():
+    """Verify X webhook subscription"""
+    try:
+        # Get the challenge parameter
+        crc_token = request.args.get('crc_token')
+        if not crc_token:
+            return jsonify({"error": "Missing crc_token"}), 400
+
+        # Create HMAC SHA-256 hash
+        hmac_token = hmac.new(
+            key=required_vars["X_API_KEY_SECRET"].encode('utf-8'),
+            msg=crc_token.encode('utf-8'),
+            digestmod=hashlib.sha256
+        ).digest()
+
+        # Encode the hash in base64
+        response_token = base64.b64encode(hmac_token).decode('utf-8')
+
+        # Return the response
+        return jsonify({"response_token": f"sha256={response_token}"}), 200
+    except Exception as e:
+        logger.error(f"Error verifying X webhook: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     logger.info("Starting Templar Bot Server")
