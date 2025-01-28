@@ -31,7 +31,15 @@ REQUIRED_ENV_VARS = {
     'X_CLIENT_ID': os.getenv('X_CLIENT_ID'),
     'X_CLIENT_SECRET': os.getenv('X_CLIENT_SECRET'),
     'X_ACCESS_TOKEN': os.getenv('X_ACCESS_TOKEN'),
-    'X_ACCESS_TOKEN_SECRET': os.getenv('X_ACCESS_TOKEN_SECRET')
+    'X_ACCESS_TOKEN_SECRET': os.getenv('X_ACCESS_TOKEN_SECRET'),
+    'X_API_KEY': os.getenv('X_API_KEY'),
+    'X_API_KEY_SECRET': os.getenv('X_API_KEY_SECRET'),
+    'X_BEARER_TOKEN': os.getenv('X_BEARER_TOKEN'),
+    'IG_ACCESS_TOKEN': os.getenv('IG_ACCESS_TOKEN'),
+    'IG_ACCOUNT_ID': os.getenv('IG_ACCOUNT_ID'),
+    'IG_VERIFY_TOKEN': os.getenv('IG_VERIFY_TOKEN'),
+    'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
+    'INSTAGRAM_ACCOUNT_ID': os.getenv('INSTAGRAM_ACCOUNT_ID')
 }
 
 # Check for missing environment variables
@@ -94,9 +102,9 @@ class APIHandler:
 
 class InstagramHandler(APIHandler):
     def __init__(self):
-        self.base_url = f"https://graph.facebook.com/v19.0/{required_vars['INSTAGRAM_ACCOUNT_ID']}"
+        self.base_url = f"https://graph.facebook.com/v19.0/{REQUIRED_ENV_VARS['INSTAGRAM_ACCOUNT_ID']}"
         self.headers = {
-            "Authorization": f"Bearer {required_vars['IG_ACCESS_TOKEN']}",
+            "Authorization": f"Bearer {REQUIRED_ENV_VARS['IG_ACCESS_TOKEN']}",
             "Content-Type": "application/json"
         }
 
@@ -174,7 +182,7 @@ class InstagramHandler(APIHandler):
         data = {
             "image_url": image_url,
             "caption": caption,
-            "access_token": required_vars["IG_ACCESS_TOKEN"]
+            "access_token": REQUIRED_ENV_VARS['IG_ACCESS_TOKEN']
         }
 
         try:
@@ -194,10 +202,10 @@ class XHandler(APIHandler):
         
         # Initialize OAuth1 session
         self.oauth = OAuth1Session(
-            required_vars["X_API_KEY"],
-            client_secret=required_vars["X_API_KEY_SECRET"],
-            resource_owner_key=required_vars["X_ACCESS_TOKEN"],
-            resource_owner_secret=required_vars["X_ACCESS_TOKEN_SECRET"]
+            REQUIRED_ENV_VARS['X_CLIENT_ID'],
+            client_secret=REQUIRED_ENV_VARS['X_CLIENT_SECRET'],
+            resource_owner_key=REQUIRED_ENV_VARS['X_ACCESS_TOKEN'],
+            resource_owner_secret=REQUIRED_ENV_VARS['X_ACCESS_TOKEN_SECRET']
         )
 
     def get_user_id(self):
@@ -328,7 +336,7 @@ def verify_webhook():
     challenge = request.args.get('hub.challenge')
 
     if mode and token:
-        if mode == 'subscribe' and token == required_vars["VERIFY_TOKEN"]:
+        if mode == 'subscribe' and token == REQUIRED_ENV_VARS['IG_VERIFY_TOKEN']:
             logger.info("Webhook verified")
             return challenge, 200
         else:
@@ -422,7 +430,7 @@ def verify_x_webhook():
 
         # Create HMAC SHA-256 hash
         hmac_token = hmac.new(
-            key=required_vars["X_API_KEY_SECRET"].encode('utf-8'),
+            key=REQUIRED_ENV_VARS['X_CLIENT_SECRET'].encode('utf-8'),
             msg=crc_token.encode('utf-8'),
             digestmod=hashlib.sha256
         ).digest()
